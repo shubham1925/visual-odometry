@@ -28,6 +28,7 @@ import glob
 import ReadCameraModel as rcm
 import UndistortImage as ui
 import random
+import copy
 # # ------Data Preparation------
 original_images = []
 gray_images = []
@@ -86,7 +87,8 @@ def load_params():
     cam_params = np.load('camera_params.npy')
     g_image = np.load('g_camera_image.npy')
     lut = np.load('LUT.npy')
-    print(cam_params, g_image, lut)
+    # print(cam_params, g_image, lut)
+    return cam_params, g_image, lut
 
 def fast_feature_tracking(undistorted_img_1, undistorted_img_2, feature_img_1, feature_img_2):
     print("Tracking features...\n")
@@ -122,6 +124,7 @@ def fast_feature_tracking(undistorted_img_1, undistorted_img_2, feature_img_1, f
     # # Sort them in the order of their distance.
     matches = sorted(matches, key = lambda x:x.distance)
     # # Draw first 10 matches.
+    print("Total matches in two images are: {}".format(len(matches)))
     # print(len(matches), matches[10].imgIdx, matches[10].trainIdx, matches[10].queryIdx)
     corr_points_1, corr_points_2 = [], []
     for i in matches:
@@ -147,6 +150,7 @@ def fast_feature_tracking(undistorted_img_1, undistorted_img_2, feature_img_1, f
     #     key = cv.waitKey(1)
     #     if key == 27:
     #         break
+    print("Length of each matched points: {0}, {1}\n".format(len(corr_pt1), len(corr_pt2)))
     return corr_pt1, corr_pt2
 
 def fundamental_matrix(p1, p2):
@@ -162,18 +166,19 @@ def fundamental_matrix(p1, p2):
     f_matrix = V[-1]
     f_matrix = f_matrix.reshape(3,3)
     U_updated, S_updated, V_updated = np.linalg.svd(f_matrix)
-    print(S_updated)
+    # print(S_updated)
     S_updated_new = np.array([[S_updated[0], 0, 0], [0, S_updated[1], 0], [0, 0, 0]])
 #    f_matrix = U_updated.dot(S_updated_new.dot(V_updated))
     f_matrix = np.matmul(U_updated, np.matmul(S_updated_new, V_updated))
-    print(f_matrix)
-    # return f_matrix
+    # print(f_matrix)
+    return f_matrix
 
 def check_threshold(f, x1, x2):
     val = np.matmul(np.matmul(np.array([x2[0], x2[1], 1]).T, f), np.array([x1[0], x1[1], 1]))
     return val
 
 def outlier_detection(features_img1, features_img2, threshold, iterations):
+    print("Detecting outliers...")
     it = 0
     final_inliers_1 = []
     final_inliers_2 = []
@@ -206,30 +211,99 @@ def outlier_detection(features_img1, features_img2, threshold, iterations):
         for j in range(0, len(features_img1)):
             thresh_new = check_threshold(EstFundamentalMatrix, features_img1[j], features_img2[j])
             if thresh_new < threshold:
-                print("Check")
+                # print("Check")
                 inliers_count = inliers_count + 1
                 temp1.append(features_img1[j])
                 temp2.append(features_img2[j])
         
         #update if better match found
         if inliers_count > inliers_threshold:
-            print("Update")
+            # print("Update")
             inliers_threshold = inliers_count 
             final_inliers_1 = temp1
             final_inliers_2 = temp2
             FinFundamentalMatrix = EstFundamentalMatrix
-        
+    print("After RANSACwa length of both: {0}, {1} \n".format(len(final_inliers_1), len(final_inliers_2)))     
     return final_inliers_1, final_inliers_2, FinFundamentalMatrix
 
+def essential_matrix(k, f):
+    print("Computing Essential Matrix... \n")
+    e = np.matmul(k.T, (np.matmul(f, k)))
+    u,s,v = np.linalg.svd(e, full_matrices = True, compute_uv = True)
+    s_updated = np.array([[s[0], 0, 0], [0, s[1], 0], [0, 0, 0]])
+    e_final = np.matmul(u, np.matmul(s_updated, v))
+    return e_final    
+
+def camera_poses(E):
+    print("Checking camera poses...")
+    W = np.array([[0,-1,0], [1, 0, 0], [0, 0, 1]])
+    U,D,V = np.linalg.svd(E, full_matrices = True, compute_uv = True)
+    C1 = U[:,2]
+    C2 = -U[:,2]
+    C3 = U[:,2]
+    C4 = -U[:,2]
+    
+    R1 = np.matmul(U, np.matmul(W, V.T))
+    R2 = np.matmul(U, np.matmul(W, V.T))
+    R3 = np.matmul(U, np.matmul(W.T, V.T))
+    R4 = np.matmul(U, np.matmul(W.T, V.T))
+    
+    if np.linalg.det(R1) == -1:
+        C1 = -C1
+        R1 = -R1
+    if np.linalg.det(R2) == -1:
+        C2 = -C2
+        R2 = -R2
+    if np.linalg.det(R3) == -1:
+        C3 = -C3
+        R3 = -R3
+    if np.linalg.det(R4) == -1:
+        C4 = -C4
+        R4 = -R4
+    
+    return C1,R1,C2,R2,C3,R3,C4,R4
+
 orig_img, gray_img, color_img, LUT_matrix = read_images()
-feature_img_1, feature_img_2 = color_img[0], color_img[1]
+feature_img_1, feature_img_2 = color_img[17], color_img[18]
 undistorted_img_1, undistorted_img_2 = undistort_images(feature_img_1, feature_img_2, LUT_matrix)
 # load_params()
 corres_points_1, corres_points_2 = fast_feature_tracking(undistorted_img_1, undistorted_img_2, feature_img_1, feature_img_2)
 
-iterations = 100
-constraint_threshold = 1
+iterations = 1500
+constraint_threshold = 0.0001
 
-fin_inliers_1, fin_inliers_2, fin_funda_mat = outlier_detection(corres_points_1, corres_points_2, constraint_threshold, iterations)
-print(fin_inliers_1, fin_inliers_2)
+inliers_1, inliers_2, final_funda_matrix = outlier_detection(corres_points_1, corres_points_2, constraint_threshold, iterations)
+
+camera_parameters, g_image, lut_load = load_params()
+# print(camera_parameters)
+
+intrinsic_matrix = np.array([[camera_parameters[0], 0, camera_parameters[2]],
+                            [0, camera_parameters[1], camera_parameters[3]],
+                            [0, 0, 1]])
+
+return_essential_matrix = essential_matrix(intrinsic_matrix, final_funda_matrix)
+# print(return_essential_matrix)
+C1,R1,C2,R2,C3,R3,C4,R4 = camera_poses(return_essential_matrix)
+print(C1, "\n", C2,"\n", C3,"\n", C4)
+
+# for i in inliers_1:
+#     feature_img_1 = cv.circle(feature_img_1, (i[0], i[1]), 1, (0,0,255), 2)
+
+# for i in inliers_2:
+#     feature_img_2 = cv.circle(feature_img_2, (i[0], i[1]), 1, (0,0,255), 2)
+
+# while(1):
+#     cv.imshow('features_in_img0',feature_img_1)
+#     cv.imshow('features_in_img1',feature_img_2)
+#     key = cv.waitKey(1)
+#     if key == 27:
+#         break
+
+# keypoint_1 = [cv.KeyPoint(kp[0], kp[1], 1) for kp in inliers_1]
+# keypoint_2 = [cv.KeyPoint(kp[0], kp[1], 1) for kp in inliers_2]
+# print(keypoint_1)
+# br = cv.BRISK_create()
+# keypoints, descriptors = br.compute(feature_img_1, inliers_1)
+# keypoints_second, descriptors_second = br.compute(feature_img_2, inliers_2)
+
 cv.destroyAllWindows()
