@@ -119,7 +119,7 @@ def fast_feature_tracking(undistorted_img_1, undistorted_img_2, feature_img_1, f
 #    keypoints, descriptors = br.compute(feature_img_1, keypoints)
 #    keypoints_second, descriptors_second = br.compute(feature_img_2, keypoints_second)
     
-    orb = cv.ORB_create()
+    orb = cv.ORB_create(nfeatures = 700)
     kp1 = orb.detect(gray, None)
     keypoints, descriptors = orb.compute(feature_img_1, kp1)
     
@@ -193,7 +193,7 @@ def fundamental_matrix(p1, p2):
     return f_matrix
 
 def check_threshold(f, x1, x2):
-    val = np.matmul(np.matmul(np.array([x2[0], x2[1], 1]).T, f), np.array([x1[0], x1[1], 1]))
+    val = np.matmul(np.matmul(np.array([x2[0], x2[1], 1]), f), np.array([x1[0], x1[1], 1]).T)
     return val
 
 def outlier_detection(features_img1, features_img2, threshold, iterations):
@@ -255,10 +255,10 @@ def outlier_detection(features_img1, features_img2, threshold, iterations):
 
 def essential_matrix(k, f):
     print("Computing Essential Matrix... \n")
-    e = np.matmul(k.T, (np.matmul(f, k)))
+    e = np.matmul(np.matmul(k.T, f),k)
     u,s,v = np.linalg.svd(e, full_matrices = True, compute_uv = True)
     s_updated = np.array([[s[0], 0, 0], [0, s[1], 0], [0, 0, 0]])
-    e_final = np.matmul(u, np.matmul(s_updated, v))
+    e_final = np.matmul(np.matmul(u, s_updated), v)
     return e_final    
 
 def camera_poses(E):
@@ -270,10 +270,10 @@ def camera_poses(E):
     C3 = U[:,2]
     C4 = -U[:,2]
     
-    R1 = np.matmul(U, np.matmul(W, V))
-    R2 = np.matmul(U, np.matmul(W, V))
-    R3 = np.matmul(U, np.matmul(W.T, V))
-    R4 = np.matmul(U, np.matmul(W.T, V))
+    R1 = np.matmul(np.matmul(U,W), V)
+    R2 = np.matmul(np.matmul(U,W), V)
+    R3 = np.matmul(np.matmul(U,W.T), V)
+    R4 = np.matmul(np.matmul(U,W.T), V)
     
     
     if np.linalg.det(R1) == -1:
@@ -365,19 +365,41 @@ def camera_pose_disambiguation(Cset, Rset, Xset):
     counts.append(count1)
     counts.append(count2)
     counts.append(count3)
-    counts.append(count4)       
+    counts.append(count4)  
+    print("Inside this")
     print(counts)
+    print(count1, count2, count3, count4)
     if counts.index(max(counts)) == 0:
         print("1")
+        count = []
+        count1 = 0
+        count2 = 0
+        count3 = 0
+        count4 = 0
         return C1, R1
     if counts.index(max(counts)) == 1:
         print("2")
+        count = []
+        count1 = 0
+        count2 = 0
+        count3 = 0
+        count4 = 0
         return C2, R2
     if counts.index(max(counts)) == 2:
         print("3")
+        count = []
+        count1 = 0
+        count2 = 0
+        count3 = 0
+        count4 = 0
         return C3, R3
     if counts.index(max(counts)) == 3:
         print("4")
+        count = []
+        count1 = 0
+        count2 = 0
+        count3 = 0
+        count4 = 0
         return C4, R4 
     
 def final_matrix(R,C):
@@ -401,14 +423,14 @@ prev_H = np.eye(4)
 orig_img, gray_img, color_img, LUT_matrix = read_images()
 all_points = []
 
-for i in range(50, images_to_read-440):
+for i in range(50, images_to_read-400):
     feature_img_1, feature_img_2 = color_img[i], color_img[i+1]
     undistorted_img_1, undistorted_img_2 = undistort_images(feature_img_1, feature_img_2, LUT_matrix)
     # load_params()
     corres_points_1, corres_points_2 = fast_feature_tracking(undistorted_img_1, undistorted_img_2, feature_img_1, feature_img_2)
     
-    iterations = 50
-    constraint_threshold = 1
+    iterations = 500
+    constraint_threshold = 0.01
     
     inliers_1, inliers_2, final_funda_matrix = outlier_detection(corres_points_1, corres_points_2, constraint_threshold, iterations)
     
@@ -453,9 +475,11 @@ for i in range(50, images_to_read-440):
     
     point = np.matmul(prev_H, np.array([[0,0,0,1]]).T)
     print(point)
-    all_points.append(point)
+    all_points.append(point)      
     plt.scatter(point[0][0], point[1][0], color = 'b')
-    
+    C_set.clear()
+    R_set.clear()
+    X_set.clear()
     # for i in inliers_1:
     #     feature_img_1 = cv.circle(feature_img_1, (i[0], i[1]), 1, (0,0,255), 2)
     
@@ -475,6 +499,6 @@ for i in range(50, images_to_read-440):
     # br = cv.BRISK_create()
     # keypoints, descriptors = br.compute(feature_img_1, inliers_1)
     # keypoints_second, descriptors_second = br.compute(feature_img_2, inliers_2)
-
+#plt.plot(all_points[0], all_points[1])
 plt.show()
 cv.destroyAllWindows()
