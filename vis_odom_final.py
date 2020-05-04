@@ -98,17 +98,19 @@ def fast_feature_tracking(undistorted_img_1, undistorted_img_2, feature_img_1, f
 
     img = undistorted_img_1
     gray = cv.cvtColor(img, cv.COLOR_BGR2GRAY) #np.float32(gray_images[0])
+    gray1 = gray[200:650, 0:1280]
 
     img1 = undistorted_img_2
     gray1 = cv.cvtColor(img1, cv.COLOR_BGR2GRAY) #np.float32(gray_images[0])
+    gray1 = gray1[200:650, 0:1280]
 
 #    fast = cv.FastFeatureDetector_create(threshold=45, nonmaxSuppression=False) #threshold=35, nonmaxSuppression=False)
-#    keypoints = fast.detect(gray, None)
-#    keypoints_second = fast.detect(gray1, None)
-
-#    with_features = cv.drawKeypoints(feature_img_1, keypoints, None, color=(0,0,255))
-#    with_features_second = cv.drawKeypoints(feature_img_2, keypoints_second, None, color=(0,255,0))
-
+#    keypoints = fast.detect(feature_img_1, None)
+#    keypoints_second = fast.detect(feature_img_2, None)
+#
+##    with_features = cv.drawKeypoints(feature_img_1, keypoints, None, color=(0,0,255))
+##    with_features_second = cv.drawKeypoints(feature_img_2, keypoints_second, None, color=(0,255,0))
+#
 #    # Print the number of keypoints detected in the training image
 #    print("Number of Keypoints Detected In The First Image: ", len(keypoints))
 #    print("Number of Keypoints Detected In The Second Image: ", len(keypoints_second))
@@ -116,41 +118,42 @@ def fast_feature_tracking(undistorted_img_1, undistorted_img_2, feature_img_1, f
 #    # To create descriptors
 #    print("Creating Descriptors...")
 #    br = cv.BRISK_create()
-#    keypoints, descriptors = br.compute(feature_img_1, keypoints)
-#    keypoints_second, descriptors_second = br.compute(feature_img_2, keypoints_second)
+#    keypoints, descriptors = br.compute(gray, keypoints)
+#    keypoints_second, descriptors_second = br.compute(gray1, keypoints_second)
     
-    orb = cv.ORB_create(nfeatures = 700)
-    kp1 = orb.detect(gray, None)
-    keypoints, descriptors = orb.compute(feature_img_1, kp1)
+    orb = cv.ORB_create(nfeatures = 1000)
+#    kp1 = orb.detect(gray, None)
+    keypoints, descriptors = orb.detectAndCompute(feature_img_1, None)
     
-    kp2 = orb.detect(gray, None)
-    keypoints_second, descriptors_second = orb.compute(feature_img_2, kp2)
+#    kp2 = orb.detect(gray1, None)
+    keypoints_second, descriptors_second = orb.detectAndCompute(feature_img_2, None)
     
-    print("Number of Keypoints Detected In The First Image: ", len(keypoints))
-    print("Number of Keypoints Detected In The Second Image: ", len(keypoints_second))
-    
-    # BF Matcher
-    # # create BFMatcher object
-    bf = cv.BFMatcher(cv.NORM_HAMMING, crossCheck=True)
-    # # Match descriptors.
-    matches = bf.match(descriptors, descriptors_second) #query, train
-    # # Sort them in the order of their distance.
-    matches = sorted(matches, key = lambda x:x.distance)
-    # # Draw first 10 matches.
-    print("Total matches in two images are: {}".format(len(matches)))
-    # print(len(matches), matches[10].imgIdx, matches[10].trainIdx, matches[10].queryIdx)
-    corr_points_1, corr_points_2 = [], []
-    for i in matches:
-        corr_points_1.append(keypoints[i.queryIdx].pt)
-        corr_points_2.append(keypoints_second[i.trainIdx].pt)
+#    print("Number of Keypoints Detected In The First Image: ", len(keypoints))
+#    print("Number of Keypoints Detected In The Second Image: ", len(keypoints_second))
 
-#    img3 = cv.drawMatches(color_images[34],keypoints,color_images[35],keypoints_second,matches[:300],None,flags=cv.DrawMatchesFlags_NOT_DRAW_SINGLE_POINTS)
-#    plt.imshow("3", img3)
+    bf = cv.BFMatcher(cv.NORM_HAMMING, crossCheck=True)
+    matches = bf.match(descriptors, descriptors_second) #query, train
+    matches = sorted(matches, key = lambda x:x.distance)
+#    print("Total matches in two images are: {}".format(len(matches)))
+    
+    #FLANN based
+    FLANN_INDEX_LSH = 6
+    index_params = dict(algorithm = FLANN_INDEX_LSH, table_number = 6, key_size = 12, multi_probe_level = 1)
+    search_params = dict(checks=50)
+
+    flann = cv.FlannBasedMatcher(index_params,search_params)
+    matches = flann.knnMatch(descriptors,descriptors_second,k=2)
+    
+    corr_points_1, corr_points_2 = [], []
+    for i,(m,n) in enumerate(matches):
+        if m.distance < 0.5*n.distance:
+            corr_points_1.append(keypoints[m.queryIdx].pt)
+            corr_points_2.append(keypoints_second[m.trainIdx].pt)
+
     corr_pt1, corr_pt2 = [], []
     for i, j in zip(corr_points_1, corr_points_2):
         corr_pt1.append((int(i[0]), int(i[1])))
         corr_pt2.append((int(j[0]), int(j[1])))
-    # print(corr_pt1, "\n", corr_pt2)
 
     # # Check if points are correct
     pt1, pt2 =corr_pt1[0][0], corr_pt1[0][1]
@@ -169,7 +172,7 @@ def fast_feature_tracking(undistorted_img_1, undistorted_img_2, feature_img_1, f
 #        key = cv.waitKey(1)
 #        if key == 27:
 #            break
-    print("Length of each matched points: {0}, {1}\n".format(len(corr_pt1), len(corr_pt2)))
+#    print("Length of each matched points: {0}, {1}\n".format(len(corr_pt1), len(corr_pt2)))
     return corr_pt1, corr_pt2
 
 def fundamental_matrix(p1, p2):
@@ -179,7 +182,7 @@ def fundamental_matrix(p1, p2):
         x2 = p2[i][0]
         y1 = p1[i][1]
         y2 = p2[i][1]
-        A[i] = np.array([x1*x2, x1*y2, x1, y1*x2, y1*y2, y1, x2, y2, 1])
+        A[i] = np.array([x1*x2, y1*x2, x2, x1*y2, y1*y2, y2, x1, y1, 1])
     
     U,S,V = np.linalg.svd(A, full_matrices = True, compute_uv = True)
     f_matrix = V[-1]
@@ -188,7 +191,8 @@ def fundamental_matrix(p1, p2):
     # print(S_updated)
     S_updated_new = np.array([[S_updated[0], 0, 0], [0, S_updated[1], 0], [0, 0, 0]])
 #    f_matrix = U_updated.dot(S_updated_new.dot(V_updated))
-    f_matrix = np.matmul(np.matmul(U_updated, S_updated_new), V_updated)
+#    f_matrix = np.matmul(np.matmul(U_updated, S_updated_new), V_updated)
+    f_matrix = U_updated @ S_updated_new @ V_updated
     # print(f_matrix)
     return f_matrix
 
@@ -197,7 +201,7 @@ def check_threshold(f, x1, x2):
     return val
 
 def outlier_detection(features_img1, features_img2, threshold, iterations):
-    print("Detecting outliers...")
+#    print("Detecting outliers...")
     it = 0
     final_inliers_1 = []
     final_inliers_2 = []
@@ -249,15 +253,15 @@ def outlier_detection(features_img1, features_img2, threshold, iterations):
             final_inliers_1 = temp1
             final_inliers_2 = temp2
             FinFundamentalMatrix = EstFundamentalMatrix
-    print("After RANSACwa length of both: {0}, {1} \n".format(len(final_inliers_1), len(final_inliers_2))) 
+#    print("After RANSACwa length of both: {0}, {1} \n".format(len(final_inliers_1), len(final_inliers_2))) 
 #    plt.scatter(iterations, difference_plot)    
     return final_inliers_1, final_inliers_2, FinFundamentalMatrix
 
 def essential_matrix(k, f):
-    print("Computing Essential Matrix... \n")
+#    print("Computing Essential Matrix... \n")
     e = np.matmul(np.matmul(k.T, f),k)
     u,s,v = np.linalg.svd(e, full_matrices = True, compute_uv = True)
-    s_updated = np.array([[s[0], 0, 0], [0, s[1], 0], [0, 0, 0]])
+    s_updated = np.array([[1, 0, 0], [0, 1, 0], [0, 0, 0]])
     e_final = np.matmul(np.matmul(u, s_updated), v)
     return e_final    
 
@@ -273,19 +277,18 @@ def camera_poses(E):
     R1 = np.matmul(np.matmul(U,W), V)
     R2 = np.matmul(np.matmul(U,W), V)
     R3 = np.matmul(np.matmul(U,W.T), V)
-    R4 = np.matmul(np.matmul(U,W.T), V)
+    R4 = np.matmul(np.matmul(U,W.T), V)    
     
-    
-    if np.linalg.det(R1) == -1:
+    if np.linalg.det(R1) < 0:
         C1 = -C1
         R1 = -R1
-    if np.linalg.det(R2) == -1:
+    if np.linalg.det(R2) < 0:
         C2 = -C2
         R2 = -R2
-    if np.linalg.det(R3) == -1:
+    if np.linalg.det(R3) < 0:
         C3 = -C3
         R3 = -R3
-    if np.linalg.det(R4) == -1:
+    if np.linalg.det(R4) < 0:
         C4 = -C4
         R4 = -R4
     
@@ -301,8 +304,8 @@ def camera_matrices(C,R):
 
 #input p1 and p2 for camera, and matching feature point to get 3d point
 def triangulated_point(P1, P2, p_img1, p_img2):
-    x1_skew = np.array([[0, -1, p_img1[1]], [1, 0, -p_img1[0]], [-p_img1[1], -p_img1[0], 0]])
-    x2_skew = np.array([[0, -1, p_img2[1]], [1, 0, -p_img2[0]], [-p_img2[1], -p_img2[0], 0]])
+    x1_skew = np.array([[0, -1, p_img1[1]], [1, 0, -p_img1[0]], [-p_img1[1], p_img1[0], 0]])
+    x2_skew = np.array([[0, -1, p_img2[1]], [1, 0, -p_img2[0]], [-p_img2[1], p_img2[0], 0]])
     
     new_1 = np.matmul(x1_skew, P1[0:3, :])
     new_2 = np.matmul(x2_skew, P2)
@@ -318,7 +321,7 @@ def triangulated_point(P1, P2, p_img1, p_img2):
     return X_3D   
 
 def camera_pose_disambiguation(Cset, Rset, Xset):
-    print("cam_dis")
+#    print("cam_dis")
     threshold_count = 0
     count1 = 0
     count2 = 0
@@ -329,8 +332,7 @@ def camera_pose_disambiguation(Cset, Rset, Xset):
     r3_2 = Rset[1][2, :].reshape((1,3))
     r3_3 = Rset[2][2, :].reshape((1,3))
     r3_4 = Rset[3][2, :].reshape((1,3))
-#    print(r3_1.shape)
-    
+
     C_1 = Cset[0].reshape((3,1))
     print(C_1.shape)
     C_2 = Cset[1].reshape((3,1))
@@ -366,40 +368,20 @@ def camera_pose_disambiguation(Cset, Rset, Xset):
     counts.append(count2)
     counts.append(count3)
     counts.append(count4)  
-    print("Inside this")
+#    print("Inside this")
     print(counts)
-    print(count1, count2, count3, count4)
+#    print(count1, count2, count3, count4)
     if counts.index(max(counts)) == 0:
         print("1")
-        count = []
-        count1 = 0
-        count2 = 0
-        count3 = 0
-        count4 = 0
         return C1, R1
     if counts.index(max(counts)) == 1:
         print("2")
-        count = []
-        count1 = 0
-        count2 = 0
-        count3 = 0
-        count4 = 0
         return C2, R2
     if counts.index(max(counts)) == 2:
         print("3")
-        count = []
-        count1 = 0
-        count2 = 0
-        count3 = 0
-        count4 = 0
         return C3, R3
     if counts.index(max(counts)) == 3:
         print("4")
-        count = []
-        count1 = 0
-        count2 = 0
-        count3 = 0
-        count4 = 0
         return C4, R4 
     
 def final_matrix(R,C):
@@ -407,12 +389,6 @@ def final_matrix(R,C):
     temp2 = np.array((0,0,0,1))
     final = np.vstack((temp1, temp2))
     return final
-    
- 
-all_3d_1 = []
-all_3d_2 = []
-all_3d_3 = []
-all_3d_4 = []
 
 C_set = []
 R_set = []
@@ -423,28 +399,29 @@ prev_H = np.eye(4)
 orig_img, gray_img, color_img, LUT_matrix = read_images()
 all_points = []
 
-for i in range(50, images_to_read-400):
+camera_parameters, g_image, lut_load = load_params()    
+intrinsic_matrix = np.array([[camera_parameters[0], 0, camera_parameters[2]],
+                            [0, camera_parameters[1], camera_parameters[3]],
+                            [0, 0, 1]])
+
+iterations = 50
+constraint_threshold = 0.1
+
+for i in range(50, images_to_read-250):   
+    print("img: ", i)
+    all_3d_1 = []
+    all_3d_2 = []
+    all_3d_3 = []
+    all_3d_4 = []
+    
     feature_img_1, feature_img_2 = color_img[i], color_img[i+1]
     undistorted_img_1, undistorted_img_2 = undistort_images(feature_img_1, feature_img_2, LUT_matrix)
-    # load_params()
-    corres_points_1, corres_points_2 = fast_feature_tracking(undistorted_img_1, undistorted_img_2, feature_img_1, feature_img_2)
-    
-    iterations = 500
-    constraint_threshold = 0.01
-    
-    inliers_1, inliers_2, final_funda_matrix = outlier_detection(corres_points_1, corres_points_2, constraint_threshold, iterations)
-    
-    camera_parameters, g_image, lut_load = load_params()
-    # print(camera_parameters)
-    
-    intrinsic_matrix = np.array([[camera_parameters[0], 0, camera_parameters[2]],
-                                [0, camera_parameters[1], camera_parameters[3]],
-                                [0, 0, 1]])
-    
+    corres_points_1, corres_points_2 = fast_feature_tracking(undistorted_img_1, undistorted_img_2, feature_img_1, feature_img_2)   
+    inliers_1, inliers_2, final_funda_matrix = outlier_detection(corres_points_1, corres_points_2, constraint_threshold, iterations)    
+       
     return_essential_matrix = essential_matrix(intrinsic_matrix, final_funda_matrix)
-    # print(return_essential_matrix)
     C1,R1,C2,R2,C3,R3,C4,R4 = camera_poses(return_essential_matrix)
-#    print(R1, "\n", R2,"\n", R3,"\n", R4)
+
     C_set = [C1, C2, C3, C4]
     R_set = [R1, R2, R3, R4]
     
@@ -465,6 +442,9 @@ for i in range(50, images_to_read-400):
         X_4 = triangulated_point(P1_4, P2_4, inliers_1[i], inliers_2[i])
         all_3d_4.append(X_4)
         
+    inliers_1.clear()
+    inliers_2.clear()
+        
     X_set = [all_3d_1, all_3d_2, all_3d_3, all_3d_4]
     
     C_final, R_final = camera_pose_disambiguation(C_set, R_set, X_set)
@@ -474,12 +454,13 @@ for i in range(50, images_to_read-400):
     prev_H = np.matmul(prev_H, final_homogenous_matrix)
     
     point = np.matmul(prev_H, np.array([[0,0,0,1]]).T)
-    print(point)
+#    print(point)
     all_points.append(point)      
-    plt.scatter(point[0][0], point[1][0], color = 'b')
+    plt.scatter(point[0][0], point[2][0], color = 'b')
     C_set.clear()
     R_set.clear()
     X_set.clear()
+     
     # for i in inliers_1:
     #     feature_img_1 = cv.circle(feature_img_1, (i[0], i[1]), 1, (0,0,255), 2)
     
