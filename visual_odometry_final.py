@@ -44,24 +44,24 @@ for image in os.listdir(path):
     images.sort() 
 
 
-def isRotationMatrix(R) :
-    Rt = np.transpose(R)
-    shouldBeIdentity = np.dot(Rt, R)
-    I = np.identity(3, dtype = R.dtype)
-    n = np.linalg.norm(I - shouldBeIdentity)
+def check_rotation_matrix(R_current) :
+    R_transpose = np.transpose(R_current)
+    is_it_identity = np.dot(R_transpose, R_current)
+    I = np.identity(3, dtype = R_current.dtype)
+    n = np.linalg.norm(I - is_it_identity)
     return n < 1e-6
 
-def rotationMatrixToEulerAngles(R) :
-    assert(isRotationMatrix(R))
-    sy = math.sqrt(R[0,0] * R[0,0] +  R[1,0] * R[1,0])
-    singular = sy < 1e-6
+def convert_rotation_to_euler(R) :
+    assert(check_rotation_matrix(R))
+    sqrt_sy = math.sqrt(R[0,0] * R[0,0] +  R[1,0] * R[1,0])
+    singular = sqrt_sy < 1e-6
     if  not singular :
         x = math.atan2(R[2,1] , R[2,2])
-        y = math.atan2(-R[2,0], sy)
+        y = math.atan2(-R[2,0], sqrt_sy)
         z = math.atan2(R[1,0], R[0,0])
     else :
         x = math.atan2(-R[1,2], R[1,1])
-        y = math.atan2(-R[2,0], sy)
+        y = math.atan2(-R[2,0], sqrt_sy)
         z = 0
  
     return np.array([x*180/math.pi, y*180/math.pi, z*180/math.pi])
@@ -75,20 +75,18 @@ def undistort_images(features1, features2, LUT):
 def feature_matching(colorimage1, colorimage2):
     features1 = [] 
     features2 = []
-    lowe_threshold = 0.5 
+
+    lowe_threshold = 0.75
     undistorted_img_1, undistorted_img_2 = undistort_images(colorimage1, colorimage2, LUT)
     gray1 = cv.cvtColor(undistorted_img_1,cv.COLOR_BGR2GRAY)     
     gray2 = cv.cvtColor(undistorted_img_2,cv.COLOR_BGR2GRAY)
-    
-#    gray1 = gray1[200:800, 0:1280] 
-#    gray2 = gray2[200:800, 0:1280] 
 
-    orb = cv.ORB_create(nfeatures = 2000)
+    orb = cv.ORB_create(nfeatures = 3000)
     kp1, des1 = orb.detectAndCompute(gray1,None)
     kp2, des2 = orb.detectAndCompute(gray2,None)
     FLANN_INDEX_LSH = 6
     index_params = dict(algorithm = FLANN_INDEX_LSH, table_number = 6, key_size = 12, multi_probe_level = 1)
-    search_params = dict(checks=50)
+    search_params = dict(checks=100)
     flann = cv.FlannBasedMatcher(index_params,search_params)
     matches = flann.knnMatch(des1,des2,k=2)    
 
@@ -97,6 +95,28 @@ def feature_matching(colorimage1, colorimage2):
             features1.append(kp1[m.queryIdx].pt)
             features2.append(kp2[m.trainIdx].pt)
     
+    # matches = sorted(matches[1], key = lambda x:x.distance)
+    # print("Total matches in two images are: {}".format(len(matches)))
+    # img3 = cv.drawMatches(colorimage1, kp1, colorimage2, kp2, matches[:300], None, flags=cv.DrawMatchesFlags_NOT_DRAW_SINGLE_POINTS)
+    pt1, pt2 = features1[0][0], features1[0][1]
+    for i in features1:
+        feature_img_1 = cv.circle(colorimage1, (int(i[0]), int(i[1])), 1, (0,0,255), 2)
+    
+    pt1_2, pt2_2 =features2[0][0], features2[0][1]
+    for i in features2:
+        feature_img_2 = cv.circle(colorimage2, (int(i[0]), int(i[1])), 1, (0,0,255), 2)
+
+    img1 = cv.resize(feature_img_1, (0, 0), None, .60, .60)
+    img2 = cv.resize(feature_img_2, (0, 0), None, .60, .60)
+    
+    np_horizontal_concat = np.concatenate((img1, img2), axis = 1)
+    cv.imshow("Comparison", np_horizontal_concat)
+    # cv.imshow("Matches", img3)
+    cv.waitKey(100)
+    # key = cv.waitKey(1)
+    # if key == 27:
+    #     break
+
     return features1, features2
 
 def fundamental_matrix(p1, p2):
@@ -111,7 +131,9 @@ def fundamental_matrix(p1, p2):
     f_matrix = V[-1].reshape(3,3)    
     U_updated, S_updated, V_updated = np.linalg.svd(f_matrix) 
     S_updated_new = np.array([[S_updated[0], 0, 0], [0, S_updated[1], 0], [0, 0, 0]])
-    f_matrix = U_updated @ S_updated_new @ V_updated   
+    f_matrix = U_updated @ S_updated_new @ V_updated 
+    fmax, fmin = f_matrix.max(), f_matrix.min()
+    f_matrix = (f_matrix - fmin)/(fmax - fmin)
     return f_matrix  
 
 def check_threshold(f, x1, x2): 
@@ -217,32 +239,43 @@ def triangulated_point(P1, P2, point1, point2):
     
     return X_3D
 
-def camera_pose_disambiguation(Rlist, Clist, features1, features2, upper, lower):
+def camera_pose_disambiguation(R_set, C_set, features1, features2, upper, lower):
+    global c_prev, r_prev
+    flag = 0
     threshold = 0
     P1 = np.identity(4)
     P1 = P1[0:3, :]
-    for r in range(0, len(Rlist)):
-        angles = rotationMatrixToEulerAngles(Rlist[r])
-        print(angles[0], angles[2])
+    for r in range(0, len(R_set)):
+        angles = convert_rotation_to_euler(R_set[r])
+#        print(angles[0], angles[2])
         if angles[0] < upper and angles[0] > lower and angles[2] < upper and angles[2] > lower: 
             count = 0 
-            P2 = np.hstack((Rlist[r], Clist[r]))
+#            print("in")
+            P2 = np.hstack((R_set[r], C_set[r]))
             for i in range(0, len(features1)):
                 X_3D = triangulated_point(P1, P2, features1[i], features2[i])
-                r3 = Rlist[r][2,:]
+                r3 = R_set[r][2,:]
                 r3 = r3.reshape((1,3)) 
-                C = Clist[r]
+                C = C_set[r]
                 diff = np.squeeze(r3 @ (X_3D - C))
                 if diff > 0:
                     count = count + 1 
-
-            if count > threshold: 
+    
+            if count > threshold:
+                flag = 1
+                c_prev = C_set[r] 
+                r_prev = R_set[r]
                 threshold = count
-                c_final = Clist[r]
-                r_final = Rlist[r]
-           
-    if c_final[2] > 0:
-        c_final = -c_final
+                c_final = C_set[r]
+                r_final = R_set[r]
+
+    if flag == 1:
+        if c_final[2] > 0:
+            c_final = -c_final
+
+    if flag != 1:
+        c_final = c_prev
+        r_final = r_prev
 
     return r_final, c_final
     
@@ -252,26 +285,31 @@ fx, fy, cx, cy, G_camera_image, LUT = rcm.ReadCameraModel('model/')
 K = np.array([[fx , 0 , cx],
               [0 , fy , cy],
               [0 , 0 , 1]]) 
-
-for index in range(20, len(images)-1): 
+all_pts = []
+for index in range(200, len(images) - 1): 
     print("img:",index)
     img1 = cv.imread("stereo/centre/" + str(images[index]), 0) 
     img2 = cv.imread("stereo/centre/" + str(images[index + 1]), 0)
+
     rgb_img_1 = cv.cvtColor(img1, cv.COLOR_BayerGR2BGR)
     rgb_img_2 = cv.cvtColor(img2, cv.COLOR_BayerGR2BGR) 
+
     features1, features2 = feature_matching(rgb_img_1, rgb_img_2)
-    fin_fund_matrix, inlier1, inlier2 = outlier_rejection(features1, features2, 0.15, 50)
+    fin_fund_matrix, inlier1, inlier2 = outlier_rejection(features1, features2, 0.15, 100)
     fin_essential_matrix = essential_matrix(K, fin_fund_matrix)
     c1,r1,c2,r2,c3,r3,c4,r4 = cam_pose_estimation(fin_essential_matrix)
-    Rlist = [r1,r2,r3,r4]
-    Tlist = [c1,c2,c3,c4]
-    r_final, c_final = camera_pose_disambiguation(Rlist, Tlist, inlier1, inlier2, 50, -50) 
+    R_set = [r1,r2,r3,r4]
+    C_set = [c1,c2,c3,c4]
+    r_final, c_final = camera_pose_disambiguation(R_set, C_set, inlier1, inlier2, 100, -100) 
     first_matrix = first_matrix @ final_matrix(r_final, c_final) 
     p = first_matrix @ first_point 
-#    plt.scatter(p[0][0], p[2][0], color='b')
+    all_pts.append(p)
     plt.scatter(p[0][0], -p[2][0], color='b')
+#    for i in range(0, len(all_pts)):
+#        plt.scatter(all_pts[i][0][0], -all_pts[i][2][0], color = 'b')
     inlier1.clear()
     inlier2.clear()
+#    plt.show()
 
 plt.show()        
 cv.destroyAllWindows()
