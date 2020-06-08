@@ -3,13 +3,14 @@ pipeline {
     stages {
         stage('Static Analysis') {
             steps {
-                echo 'Run the static analysis to the code' 
+                echo 'Run the  analysis to the code' 
+                echo "${env.JENKINS_URL}"
             }
         }
         stage('Trial stage') {
-            when{
-                expression{
-                    BRANCH_NAME == 'dev'
+            when {
+                expression {
+                    env.GIT_BRANCH == 'origin/master'
                 }
             }
             steps {
